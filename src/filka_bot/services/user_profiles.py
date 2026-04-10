@@ -126,3 +126,42 @@ class UserProfileService:
         with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [int(row[0]) for row in rows]
+
+    def list_users(self, segment: str = "all", limit: int = 200) -> list[dict[str, str]]:
+        segment = (segment or "all").strip().lower()
+        query = """
+            SELECT user_id, username, first_name, mode, admin_mode, first_seen_at, last_seen_at
+            FROM user_profiles
+        """
+        params: list[object] = []
+        conditions = []
+        if segment == "all":
+            pass
+        elif segment == "active_today":
+            conditions.append("DATE(last_seen_at) = DATE('now', 'localtime')")
+        elif segment.startswith("mode:"):
+            mode = segment.split(":", 1)[1]
+            conditions.append("mode = ?")
+            params.append(mode)
+        elif segment == "admin_mode":
+            conditions.append("admin_mode = 1")
+        else:
+            return []
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY last_seen_at DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [
+            {
+                "user_id": str(user_id),
+                "username": username or "",
+                "first_name": first_name or "",
+                "mode": mode or DEFAULT_MODE,
+                "admin_mode": "yes" if admin_mode else "no",
+                "first_seen_at": str(first_seen_at or ""),
+                "last_seen_at": str(last_seen_at or ""),
+            }
+            for user_id, username, first_name, mode, admin_mode, first_seen_at, last_seen_at in rows
+        ]

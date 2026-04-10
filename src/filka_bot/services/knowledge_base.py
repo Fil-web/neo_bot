@@ -5,6 +5,7 @@ import sqlite3
 from collections import Counter
 from pathlib import Path
 from typing import Optional
+from typing import Any
 
 
 class KnowledgeBaseService:
@@ -159,6 +160,66 @@ class KnowledgeBaseService:
             "chunks": int(chunks[0]) if chunks else 0,
             "embedded_chunks": int(embedded[0]) if embedded else 0,
         }
+
+    def list_documents(self, limit: int = 200) -> list[dict[str, str]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, title, source_type, source_ref, COALESCE(added_by, ''), created_at
+                FROM kb_documents
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "id": str(doc_id),
+                "title": title,
+                "source_type": source_type,
+                "source_ref": source_ref or "",
+                "added_by": str(added_by or ""),
+                "created_at": str(created_at),
+            }
+            for doc_id, title, source_type, source_ref, added_by, created_at in rows
+        ]
+
+    def get_document(self, document_id: int) -> Optional[dict[str, Any]]:
+        with self._connect() as connection:
+            doc = connection.execute(
+                """
+                SELECT id, title, source_type, source_ref, COALESCE(added_by, ''), created_at
+                FROM kb_documents
+                WHERE id = ?
+                """,
+                (document_id,),
+            ).fetchone()
+            chunks = connection.execute(
+                """
+                SELECT chunk_index, content
+                FROM kb_chunks
+                WHERE document_id = ?
+                ORDER BY chunk_index ASC
+                """,
+                (document_id,),
+            ).fetchall()
+        if not doc:
+            return None
+        return {
+            "id": str(doc[0]),
+            "title": doc[1],
+            "source_type": doc[2],
+            "source_ref": doc[3] or "",
+            "added_by": str(doc[4] or ""),
+            "created_at": str(doc[5]),
+            "chunks": [{"index": str(index), "content": content} for index, content in chunks],
+        }
+
+    def delete_document(self, document_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute("DELETE FROM kb_chunks WHERE document_id = ?", (document_id,))
+            connection.execute("DELETE FROM kb_documents WHERE id = ?", (document_id,))
+            connection.commit()
 
     def _split_into_chunks(self, content: str) -> list[str]:
         cleaned = content.strip()

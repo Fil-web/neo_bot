@@ -102,8 +102,10 @@ async def run() -> None:
         if settings.filka_admin_web_enabled:
             web_app = build_admin_app(
                 token=settings.filka_admin_web_token,
+                bot=bot,
                 analytics=analytics,
                 knowledge_base=knowledge_base,
+                moderation=moderation,
                 user_profiles=user_profiles,
             )
             web_runner = web.AppRunner(web_app)

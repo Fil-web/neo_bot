@@ -92,3 +92,33 @@ class AnalyticsService:
             safe_details = str(details or "").replace('"', "'").replace("\n", " ")
             lines.append(f'{created_at},{user_id or ""},{event_type},{success},"{safe_details}"')
         return "\n".join(lines)
+
+    def recent_events(self, limit: int = 100, event_type: str = "", success: str = "") -> list[dict[str, str]]:
+        query = """
+            SELECT created_at, user_id, event_type, success, details
+            FROM bot_events
+        """
+        conditions = []
+        params: list[object] = []
+        if event_type:
+            conditions.append("event_type = ?")
+            params.append(event_type)
+        if success in {"0", "1"}:
+            conditions.append("success = ?")
+            params.append(int(success))
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [
+            {
+                "created_at": str(created_at),
+                "user_id": "" if user_id is None else str(user_id),
+                "event_type": str(event_type),
+                "success": str(success),
+                "details": str(details or ""),
+            }
+            for created_at, user_id, event_type, success, details in rows
+        ]
