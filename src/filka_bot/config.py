@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     filka_allow_empty_whitelist: bool = Field(default=True, alias="FILKA_ALLOW_EMPTY_WHITELIST")
     filka_required_chat_id: str = Field(default="", alias="FILKA_REQUIRED_CHAT_ID")
     filka_required_chat_url: str = Field(default="", alias="FILKA_REQUIRED_CHAT_URL")
+    filka_max_document_chars: int = Field(default=12000, alias="FILKA_MAX_DOCUMENT_CHARS")
+    filka_cache_ttl_seconds: int = Field(default=3600, alias="FILKA_CACHE_TTL_SECONDS")
+    filka_spam_window_seconds: int = Field(default=20, alias="FILKA_SPAM_WINDOW_SECONDS")
+    filka_spam_max_requests: int = Field(default=6, alias="FILKA_SPAM_MAX_REQUESTS")
 
     model_config = SettingsConfigDict(
         env_file=".env",

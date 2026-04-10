@@ -33,5 +33,26 @@ def build_start_inline_keyboard() -> InlineKeyboardMarkup:
                     callback_data="menu_clear",
                 )
             ],
+            [
+                InlineKeyboardButton(text="Режим", callback_data="menu_mode")
+            ],
+        ]
+    )
+
+
+def build_mode_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Обычный", callback_data="mode_default"),
+                InlineKeyboardButton(text="Жесткий", callback_data="mode_hard"),
+            ],
+            [
+                InlineKeyboardButton(text="Деловой", callback_data="mode_business"),
+                InlineKeyboardButton(text="Продажи", callback_data="mode_sales"),
+            ],
+            [
+                InlineKeyboardButton(text="Поддержка", callback_data="mode_support"),
+            ],
         ]
     )

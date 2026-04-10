@@ -12,8 +12,14 @@ from filka_bot.config import get_settings
 from filka_bot.handlers import router
 from filka_bot.middlewares import AccessMiddleware
 from filka_bot.services.access_registry import AccessRegistry
+from filka_bot.services.analytics import AnalyticsService
+from filka_bot.services.antispam import AntiSpamService
+from filka_bot.services.document_parser import DocumentParser
 from filka_bot.services.gigachat_client import GigaChatService
 from filka_bot.services.history import DialogHistory
+from filka_bot.services.knowledge_base import KnowledgeBaseService
+from filka_bot.services.response_cache import ResponseCacheService
+from filka_bot.services.user_profiles import UserProfileService
 
 
 def configure_logging(log_path) -> None:
@@ -47,6 +53,9 @@ async def configure_bot_commands(bot: Bot) -> None:
             BotCommand(command="help", description="Подсказка по командам"),
             BotCommand(command="clear", description="Очистить память диалога"),
             BotCommand(command="status", description="Показать статус бота"),
+            BotCommand(command="mode", description="Сменить режим Фильки"),
+            BotCommand(command="admin", description="Статистика для админа"),
+            BotCommand(command="kbstats", description="Статистика базы знаний"),
         ]
     )
 
@@ -68,12 +77,31 @@ async def run() -> None:
             max_messages=settings.filka_max_history,
         )
         access_registry = AccessRegistry(db_path=settings.filka_db_path)
+        analytics = AnalyticsService(db_path=settings.filka_db_path)
+        antispam = AntiSpamService(
+            db_path=settings.filka_db_path,
+            window_seconds=settings.filka_spam_window_seconds,
+            max_requests=settings.filka_spam_max_requests,
+        )
+        document_parser = DocumentParser(max_chars=settings.filka_max_document_chars)
+        knowledge_base = KnowledgeBaseService(db_path=settings.filka_db_path)
+        response_cache = ResponseCacheService(
+            db_path=settings.filka_db_path,
+            ttl_seconds=settings.filka_cache_ttl_seconds,
+        )
+        user_profiles = UserProfileService(db_path=settings.filka_db_path)
         gigachat_service = GigaChatService(settings=settings)
 
         dp["history"] = history
         dp["access_registry"] = access_registry
+        dp["analytics"] = analytics
+        dp["antispam"] = antispam
+        dp["document_parser"] = document_parser
+        dp["knowledge_base"] = knowledge_base
         dp["gigachat_service"] = gigachat_service
+        dp["response_cache"] = response_cache
         dp["settings"] = settings
+        dp["user_profiles"] = user_profiles
         dp.message.middleware(AccessMiddleware(settings, access_registry))
         dp.include_router(router)
 

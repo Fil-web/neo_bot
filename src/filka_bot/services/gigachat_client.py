@@ -5,7 +5,7 @@ from gigachat import GigaChat
 from gigachat.models import Chat, Messages
 
 from filka_bot.config import Settings
-from filka_bot.prompts import FILKA_SYSTEM_PROMPT
+from filka_bot.prompts import build_system_prompt
 
 
 class GigaChatService:
@@ -17,8 +17,11 @@ class GigaChatService:
         history: list[dict[str, str]],
         user_text: str,
         attachments: Optional[list[str]] = None,
+        mode: str = "default",
+        knowledge_context: str = "",
     ) -> str:
-        messages = [Messages(role="system", content=FILKA_SYSTEM_PROMPT)]
+        system_prompt = build_system_prompt(mode=mode, knowledge_context=knowledge_context)
+        messages = [Messages(role="system", content=system_prompt)]
         messages.extend(Messages(role=item["role"], content=item["content"]) for item in history)
         messages.append(Messages(role="user", content=user_text, attachments=attachments))
 
