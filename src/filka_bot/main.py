@@ -18,6 +18,7 @@ from filka_bot.services.document_parser import DocumentParser
 from filka_bot.services.gigachat_client import GigaChatService
 from filka_bot.services.history import DialogHistory
 from filka_bot.services.knowledge_base import KnowledgeBaseService
+from filka_bot.services.moderation import ModerationService
 from filka_bot.services.response_cache import ResponseCacheService
 from filka_bot.services.user_profiles import UserProfileService
 
@@ -56,6 +57,8 @@ async def configure_bot_commands(bot: Bot) -> None:
             BotCommand(command="mode", description="Сменить режим Фильки"),
             BotCommand(command="admin", description="Статистика для админа"),
             BotCommand(command="kbstats", description="Статистика базы знаний"),
+            BotCommand(command="exportstats", description="Экспорт статистики"),
+            BotCommand(command="adminmode", description="Включить или выключить админ-режим"),
         ]
     )
 
@@ -85,6 +88,7 @@ async def run() -> None:
         )
         document_parser = DocumentParser(max_chars=settings.filka_max_document_chars)
         knowledge_base = KnowledgeBaseService(db_path=settings.filka_db_path)
+        moderation = ModerationService(db_path=settings.filka_db_path)
         response_cache = ResponseCacheService(
             db_path=settings.filka_db_path,
             ttl_seconds=settings.filka_cache_ttl_seconds,
@@ -98,6 +102,7 @@ async def run() -> None:
         dp["antispam"] = antispam
         dp["document_parser"] = document_parser
         dp["knowledge_base"] = knowledge_base
+        dp["moderation"] = moderation
         dp["gigachat_service"] = gigachat_service
         dp["response_cache"] = response_cache
         dp["settings"] = settings

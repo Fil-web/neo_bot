@@ -49,3 +49,9 @@ class AccessRegistry:
             row = connection.execute("SELECT COUNT(*) FROM allowed_users").fetchone()
         return int(row[0]) if row else 0
 
+    def list_allowed_users(self) -> list[int]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT user_id FROM allowed_users ORDER BY created_at ASC"
+            ).fetchall()
+        return [int(row[0]) for row in rows]

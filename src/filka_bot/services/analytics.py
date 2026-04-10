@@ -76,3 +76,19 @@ class AnalyticsService:
         for event_type, count in by_type:
             stats[f"type_{event_type}"] = int(count)
         return stats
+
+    def export_csv(self) -> str:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT created_at, user_id, event_type, success, details
+                FROM bot_events
+                ORDER BY id DESC
+                LIMIT 500
+                """
+            ).fetchall()
+        lines = ["created_at,user_id,event_type,success,details"]
+        for created_at, user_id, event_type, success, details in rows:
+            safe_details = str(details or "").replace('"', "'").replace("\n", " ")
+            lines.append(f'{created_at},{user_id or ""},{event_type},{success},"{safe_details}"')
+        return "\n".join(lines)

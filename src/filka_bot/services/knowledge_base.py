@@ -1,5 +1,6 @@
 import re
 import sqlite3
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 
@@ -77,28 +78,44 @@ class KnowledgeBaseService:
         tokens = self._tokenize(query)
         if not tokens:
             return []
+        token_weights = Counter(tokens)
 
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT kb_documents.title, kb_chunks.content
+                SELECT kb_documents.id, kb_documents.title, kb_chunks.content
                 FROM kb_chunks
                 JOIN kb_documents ON kb_documents.id = kb_chunks.document_id
                 """
             ).fetchall()
 
-        scored: list[tuple[int, str, str]] = []
-        for title, content in rows:
+        scored: list[tuple[int, int, str, str]] = []
+        for document_id, title, content in rows:
             lowered = content.lower()
-            score = sum(lowered.count(token) for token in tokens)
+            score = 0
+            for token, weight in token_weights.items():
+                occurrences = lowered.count(token)
+                if occurrences:
+                    score += occurrences * weight
+                    if token in title.lower():
+                        score += 3
+            if any(phrase in lowered for phrase in self._build_phrases(tokens)):
+                score += 5
             if score > 0:
-                scored.append((score, title, content))
+                scored.append((score, document_id, title, content))
 
-        scored.sort(key=lambda item: item[0], reverse=True)
-        return [
-            {"title": title, "content": content}
-            for _, title, content in scored[:limit]
-        ]
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        seen = set()
+        results = []
+        for _, _, title, content in scored:
+            dedupe_key = (title, content[:120])
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            results.append({"title": title, "content": content})
+            if len(results) >= limit:
+                break
+        return results
 
     def stats(self) -> dict[str, int]:
         with self._connect() as connection:
@@ -126,3 +143,8 @@ class KnowledgeBaseService:
 
     def _tokenize(self, text: str) -> list[str]:
         return [token for token in re.findall(r"[a-zA-Zа-яА-Я0-9_]+", text.lower()) if len(token) > 2]
+
+    def _build_phrases(self, tokens: list[str]) -> list[str]:
+        if len(tokens) < 2:
+            return []
+        return [f"{tokens[index]} {tokens[index + 1]}" for index in range(len(tokens) - 1)]

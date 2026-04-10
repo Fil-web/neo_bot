@@ -5,8 +5,10 @@ from tempfile import NamedTemporaryFile
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import CommandObject
 from aiogram.utils.chat_action import ChatActionSender
 from aiogram.filters import Command
+from aiogram.types import BufferedInputFile
 from aiogram.types import CallbackQuery
 from aiogram.types import Message
 
@@ -24,6 +26,7 @@ from filka_bot.services.document_parser import DocumentParsingError
 from filka_bot.services.gigachat_client import GigaChatService
 from filka_bot.services.history import DialogHistory
 from filka_bot.services.knowledge_base import KnowledgeBaseService
+from filka_bot.services.moderation import ModerationService
 from filka_bot.services.response_cache import ResponseCacheService
 from filka_bot.services.user_profiles import UserProfileService
 
@@ -173,6 +176,34 @@ async def cmd_admin(message: Message, settings: Settings, analytics: AnalyticsSe
     )
 
 
+@router.message(Command("adminmode"))
+async def cmd_adminmode(
+    message: Message,
+    settings: Settings,
+    user_profiles: UserProfileService,
+    command: CommandObject,
+) -> None:
+    if not is_admin(message.from_user.id, settings):
+        await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
+        return
+
+    enabled = (command.args or "").strip().lower() != "off"
+    user_profiles.set_admin_mode(message.from_user.id, enabled)
+    state = "включен" if enabled else "выключен"
+    await message.answer(with_emoji_prefix(f"Админ-режим {state}. Ну вот, теперь ты при полном параде."))
+
+
+@router.message(Command("exportstats"))
+async def cmd_exportstats(message: Message, settings: Settings, analytics: AnalyticsService) -> None:
+    if not is_admin(message.from_user.id, settings):
+        await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
+        return
+
+    payload = analytics.export_csv().encode("utf-8")
+    file = BufferedInputFile(payload, filename="filka_stats.csv")
+    await message.answer_document(file, caption=with_emoji_prefix("Вот экспорт статистики. Держи свой CSV."))
+
+
 @router.message(Command("kbstats"))
 async def cmd_kbstats(message: Message, settings: Settings, knowledge_base: KnowledgeBaseService) -> None:
     if not is_admin(message.from_user.id, settings):
@@ -306,6 +337,100 @@ async def clear_button(message: Message, history: DialogHistory) -> None:
     await cmd_clear(message, history)
 
 
+@router.message(Command("ban"))
+async def cmd_ban(
+    message: Message,
+    settings: Settings,
+    moderation: ModerationService,
+    analytics: AnalyticsService,
+    command: CommandObject,
+) -> None:
+    if not is_admin(message.from_user.id, settings):
+        await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
+        return
+    args = (command.args or "").split(maxsplit=1)
+    if not args:
+        await message.answer(with_emoji_prefix("Формат такой: `/ban user_id причина`"))
+        return
+    target_user_id = int(args[0])
+    reason = args[1] if len(args) > 1 else ""
+    moderation.ban(target_user_id, reason=reason)
+    analytics.log_event("moderation", user_id=target_user_id, success=True, details="ban")
+    await message.answer(with_emoji_prefix(f"Пользователь `{target_user_id}` забанен. Шалить меньше надо было."))
+
+
+@router.message(Command("mute"))
+async def cmd_mute(
+    message: Message,
+    settings: Settings,
+    moderation: ModerationService,
+    analytics: AnalyticsService,
+    command: CommandObject,
+) -> None:
+    if not is_admin(message.from_user.id, settings):
+        await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
+        return
+    args = (command.args or "").split(maxsplit=2)
+    if len(args) < 2:
+        await message.answer(with_emoji_prefix("Формат такой: `/mute user_id минуты причина`"))
+        return
+    target_user_id = int(args[0])
+    minutes = int(args[1])
+    reason = args[2] if len(args) > 2 else ""
+    moderation.mute(target_user_id, minutes=minutes, reason=reason)
+    analytics.log_event("moderation", user_id=target_user_id, success=True, details=f"mute:{minutes}")
+    await message.answer(with_emoji_prefix(f"Пользователь `{target_user_id}` замьючен на {minutes} мин."))
+
+
+@router.message(Command("unban"))
+async def cmd_unban(
+    message: Message,
+    settings: Settings,
+    moderation: ModerationService,
+    analytics: AnalyticsService,
+    command: CommandObject,
+) -> None:
+    if not is_admin(message.from_user.id, settings):
+        await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
+        return
+    target = (command.args or "").strip()
+    if not target:
+        await message.answer(with_emoji_prefix("Формат такой: `/unban user_id`"))
+        return
+    target_user_id = int(target)
+    moderation.unban(target_user_id)
+    analytics.log_event("moderation", user_id=target_user_id, success=True, details="unban")
+    await message.answer(with_emoji_prefix(f"Пользователь `{target_user_id}` снова на свободе."))
+
+
+@router.message(Command("broadcast"))
+async def cmd_broadcast(
+    message: Message,
+    settings: Settings,
+    analytics: AnalyticsService,
+    access_registry: AccessRegistry,
+    command: CommandObject,
+) -> None:
+    if not is_admin(message.from_user.id, settings):
+        await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
+        return
+    text = (command.args or "").strip()
+    if not text:
+        await message.answer(with_emoji_prefix("Формат такой: `/broadcast текст_рассылки`"))
+        return
+
+    sent = 0
+    failed = 0
+    for user_id in access_registry.list_allowed_users():
+        try:
+            await message.bot.send_message(user_id, with_emoji_prefix(text))
+            sent += 1
+        except Exception:
+            failed += 1
+    analytics.log_event("broadcast", user_id=message.from_user.id, success=True, details=f"sent:{sent};failed:{failed}")
+    await message.answer(with_emoji_prefix(f"Рассылка ушла. Отправлено: {sent}. Ошибок: {failed}."))
+
+
 @router.callback_query(F.data == "menu_help")
 async def menu_help_callback(callback: CallbackQuery) -> None:
     if callback.message:
@@ -382,6 +507,7 @@ async def handle_text(
     knowledge_base: KnowledgeBaseService,
     response_cache: ResponseCacheService,
     user_profiles: UserProfileService,
+    moderation: ModerationService,
 ) -> None:
     user_id = message.from_user.id
     user_profiles.ensure_user(
@@ -393,6 +519,15 @@ async def handle_text(
 
     if not user_text:
         await message.answer(with_emoji_prefix("Пустое сообщение. Сильно информативно, конечно."))
+        return
+
+    moderation_status, moderation_reason = moderation.check_status(user_id)
+    if moderation_status == "banned":
+        await message.answer(with_emoji_prefix("Доступ закрыт. Тебя заблокировали."))
+        return
+    if moderation_status == "muted":
+        suffix = f" Причина: {moderation_reason}." if moderation_reason else ""
+        await message.answer(with_emoji_prefix(f"Ты временно на паузе. Подожди немного.{suffix}"))
         return
 
     allowed, _ = antispam.is_allowed(user_id, request_type="text")
@@ -455,6 +590,7 @@ async def handle_photo(
     history: DialogHistory,
     analytics: AnalyticsService,
     user_profiles: UserProfileService,
+    moderation: ModerationService,
 ) -> None:
     user_id = message.from_user.id
     user_profiles.ensure_user(
@@ -465,6 +601,14 @@ async def handle_photo(
     prompt = (message.caption or "").strip() or (
         "Опиши, что на фото, и помоги пользователю разобраться по изображению."
     )
+    moderation_status, moderation_reason = moderation.check_status(user_id)
+    if moderation_status == "banned":
+        await message.answer(with_emoji_prefix("Доступ закрыт. Тебя заблокировали."))
+        return
+    if moderation_status == "muted":
+        suffix = f" Причина: {moderation_reason}." if moderation_reason else ""
+        await message.answer(with_emoji_prefix(f"Ты временно на паузе. Подожди немного.{suffix}"))
+        return
     photo = message.photo[-1]
 
     try:
@@ -508,6 +652,7 @@ async def handle_voice(
     history: DialogHistory,
     analytics: AnalyticsService,
     user_profiles: UserProfileService,
+    moderation: ModerationService,
 ) -> None:
     user_id = message.from_user.id
     user_profiles.ensure_user(
@@ -516,6 +661,14 @@ async def handle_voice(
         first_name=message.from_user.first_name or "",
     )
     media = message.voice or message.audio
+    moderation_status, moderation_reason = moderation.check_status(user_id)
+    if moderation_status == "banned":
+        await message.answer(with_emoji_prefix("Доступ закрыт. Тебя заблокировали."))
+        return
+    if moderation_status == "muted":
+        suffix = f" Причина: {moderation_reason}." if moderation_reason else ""
+        await message.answer(with_emoji_prefix(f"Ты временно на паузе. Подожди немного.{suffix}"))
+        return
     if media is None:
         await message.answer(with_emoji_prefix("Тут что-то странное с голосовым. Попробуй еще раз."))
         return
@@ -568,6 +721,7 @@ async def handle_document(
     analytics: AnalyticsService,
     knowledge_base: KnowledgeBaseService,
     user_profiles: UserProfileService,
+    moderation: ModerationService,
 ) -> None:
     user_id = message.from_user.id
     user_profiles.ensure_user(
@@ -576,6 +730,14 @@ async def handle_document(
         first_name=message.from_user.first_name or "",
     )
     document = message.document
+    moderation_status, moderation_reason = moderation.check_status(user_id)
+    if moderation_status == "banned":
+        await message.answer(with_emoji_prefix("Доступ закрыт. Тебя заблокировали."))
+        return
+    if moderation_status == "muted":
+        suffix = f" Причина: {moderation_reason}." if moderation_reason else ""
+        await message.answer(with_emoji_prefix(f"Ты временно на паузе. Подожди немного.{suffix}"))
+        return
     file_name = document.file_name or "document"
     suffix = Path(file_name).suffix or ".bin"
     prompt = (message.caption or "").strip()
