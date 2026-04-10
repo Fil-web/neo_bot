@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     filka_cache_ttl_seconds: int = Field(default=3600, alias="FILKA_CACHE_TTL_SECONDS")
     filka_spam_window_seconds: int = Field(default=20, alias="FILKA_SPAM_WINDOW_SECONDS")
     filka_spam_max_requests: int = Field(default=6, alias="FILKA_SPAM_MAX_REQUESTS")
+    filka_admin_web_enabled: bool = Field(default=True, alias="FILKA_ADMIN_WEB_ENABLED")
+    filka_admin_web_host: str = Field(default="0.0.0.0", alias="FILKA_ADMIN_WEB_HOST")
+    filka_admin_web_port: int = Field(default=8080, alias="FILKA_ADMIN_WEB_PORT")
+    filka_admin_web_token: str = Field(default="change_me_admin_token", alias="FILKA_ADMIN_WEB_TOKEN")
 
     model_config = SettingsConfigDict(
         env_file=".env",

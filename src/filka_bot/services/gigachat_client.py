@@ -46,3 +46,13 @@ class GigaChatService:
         ) as client:
             uploaded = await client.aupload_file(file=(file_path.name, file_path.read_bytes()), purpose="general")
         return uploaded.id_
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        async with GigaChat(
+            credentials=self._settings.gigachat_credentials,
+            scope=self._settings.gigachat_scope,
+            model=self._settings.gigachat_model,
+            verify_ssl_certs=self._settings.gigachat_verify_ssl_certs,
+        ) as client:
+            response = await client.aembeddings(texts=texts)
+        return [item.embedding for item in response.data]

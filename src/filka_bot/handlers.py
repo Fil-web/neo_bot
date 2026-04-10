@@ -204,6 +204,17 @@ async def cmd_exportstats(message: Message, settings: Settings, analytics: Analy
     await message.answer_document(file, caption=with_emoji_prefix("Вот экспорт статистики. Держи свой CSV."))
 
 
+@router.message(Command("exportusers"))
+async def cmd_exportusers(message: Message, settings: Settings, user_profiles: UserProfileService) -> None:
+    if not is_admin(message.from_user.id, settings):
+        await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
+        return
+
+    payload = user_profiles.export_csv().encode("utf-8")
+    file = BufferedInputFile(payload, filename="filka_users.csv")
+    await message.answer_document(file, caption=with_emoji_prefix("Вот экспорт пользователей. Наслаждайся табличкой."))
+
+
 @router.message(Command("kbstats"))
 async def cmd_kbstats(message: Message, settings: Settings, knowledge_base: KnowledgeBaseService) -> None:
     if not is_admin(message.from_user.id, settings):
@@ -408,27 +419,45 @@ async def cmd_broadcast(
     message: Message,
     settings: Settings,
     analytics: AnalyticsService,
-    access_registry: AccessRegistry,
+    user_profiles: UserProfileService,
     command: CommandObject,
 ) -> None:
     if not is_admin(message.from_user.id, settings):
         await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
         return
-    text = (command.args or "").strip()
+    raw = (command.args or "").strip()
+    if not raw:
+        await message.answer(with_emoji_prefix("Формат такой: `/broadcast segment|текст_рассылки`"))
+        return
+
+    if "|" in raw:
+        segment, text = [part.strip() for part in raw.split("|", 1)]
+    else:
+        segment, text = "all", raw
     if not text:
-        await message.answer(with_emoji_prefix("Формат такой: `/broadcast текст_рассылки`"))
+        await message.answer(with_emoji_prefix("Текст рассылки пустой. Так себе рассылка выходит."))
+        return
+
+    recipients = user_profiles.list_user_ids(segment)
+    if not recipients:
+        await message.answer(with_emoji_prefix("По этому сегменту никого не нашлось. Ну бывает."))
         return
 
     sent = 0
     failed = 0
-    for user_id in access_registry.list_allowed_users():
+    for user_id in recipients:
         try:
             await message.bot.send_message(user_id, with_emoji_prefix(text))
             sent += 1
         except Exception:
             failed += 1
-    analytics.log_event("broadcast", user_id=message.from_user.id, success=True, details=f"sent:{sent};failed:{failed}")
-    await message.answer(with_emoji_prefix(f"Рассылка ушла. Отправлено: {sent}. Ошибок: {failed}."))
+    analytics.log_event(
+        "broadcast",
+        user_id=message.from_user.id,
+        success=True,
+        details=f"segment:{segment};sent:{sent};failed:{failed}",
+    )
+    await message.answer(with_emoji_prefix(f"Рассылка ушла по сегменту `{segment}`. Отправлено: {sent}. Ошибок: {failed}."))
 
 
 @router.callback_query(F.data == "menu_help")
@@ -540,6 +569,11 @@ async def handle_text(
 
     dialog_history = history.get(user_id)
     knowledge_results = knowledge_base.search(user_text)
+    try:
+        query_embedding = (await gigachat_service.embed_texts([user_text]))[0]
+    except Exception:
+        query_embedding = None
+    knowledge_results = knowledge_base.search(user_text, query_embedding=query_embedding)
     knowledge_context = format_knowledge_context(knowledge_results)
     mode = user_profiles.get_mode(user_id)
     cache_key = response_cache.build_key(
@@ -767,13 +801,18 @@ async def handle_document(
             temp_path.unlink(missing_ok=True)
 
     if is_admin(user_id, settings) and prompt.startswith("/kb"):
-        document_id = knowledge_base.add_document(
+        document_id, chunks = knowledge_base.add_document(
             title=file_name,
             content=extracted_text,
             source_type="telegram_document",
             source_ref=file_name,
             added_by=user_id,
         )
+        try:
+            embeddings = await gigachat_service.embed_texts(chunks)
+            knowledge_base.set_embeddings(document_id, embeddings)
+        except Exception:
+            logger.exception("Failed to create embeddings for knowledge base document")
         analytics.log_event("document", user_id=user_id, success=True, details="kb_add")
         await message.answer(
             with_emoji_prefix(f"Документ добавил в базу знаний. ID: {document_id}. Ну хоть какая-то польза."))

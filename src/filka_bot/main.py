@@ -3,11 +3,13 @@ import logging
 import sys
 from logging.handlers import RotatingFileHandler
 
+from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramUnauthorizedError
 from aiogram.types import BotCommand
 
+from filka_bot.admin_web import build_admin_app
 from filka_bot.config import get_settings
 from filka_bot.handlers import router
 from filka_bot.middlewares import AccessMiddleware
@@ -71,6 +73,7 @@ async def run() -> None:
         token=settings.telegram_bot_token,
         default=DefaultBotProperties(),
     )
+    web_runner = None
     try:
         await configure_bot_commands(bot)
         dp = Dispatcher()
@@ -96,6 +99,22 @@ async def run() -> None:
         user_profiles = UserProfileService(db_path=settings.filka_db_path)
         gigachat_service = GigaChatService(settings=settings)
 
+        if settings.filka_admin_web_enabled:
+            web_app = build_admin_app(
+                token=settings.filka_admin_web_token,
+                analytics=analytics,
+                knowledge_base=knowledge_base,
+                user_profiles=user_profiles,
+            )
+            web_runner = web.AppRunner(web_app)
+            await web_runner.setup()
+            site = web.TCPSite(
+                web_runner,
+                host=settings.filka_admin_web_host,
+                port=settings.filka_admin_web_port,
+            )
+            await site.start()
+
         dp["history"] = history
         dp["access_registry"] = access_registry
         dp["analytics"] = analytics
@@ -118,6 +137,8 @@ async def run() -> None:
         )
         return
     finally:
+        if web_runner is not None:
+            await web_runner.cleanup()
         await bot.session.close()
 
 

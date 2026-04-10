@@ -1,3 +1,5 @@
+import json
+import math
 import re
 import sqlite3
 from collections import Counter
@@ -37,11 +39,18 @@ class KnowledgeBaseService:
                     document_id INTEGER NOT NULL,
                     chunk_index INTEGER NOT NULL,
                     content TEXT NOT NULL,
+                    embedding_json TEXT DEFAULT '',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(document_id) REFERENCES kb_documents(id) ON DELETE CASCADE
                 )
                 """
             )
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(kb_chunks)").fetchall()
+            }
+            if "embedding_json" not in columns:
+                connection.execute("ALTER TABLE kb_chunks ADD COLUMN embedding_json TEXT DEFAULT ''")
             connection.commit()
 
     def add_document(
@@ -52,7 +61,7 @@ class KnowledgeBaseService:
         source_type: str,
         source_ref: str = "",
         added_by: Optional[int] = None,
-    ) -> int:
+    ) -> tuple[int, list[str]]:
         chunks = self._split_into_chunks(content)
         with self._connect() as connection:
             cursor = connection.execute(
@@ -72,9 +81,27 @@ class KnowledgeBaseService:
                     (document_id, index, chunk),
                 )
             connection.commit()
-        return document_id
+        return document_id, chunks
 
-    def search(self, query: str, limit: int = 4) -> list[dict[str, str]]:
+    def set_embeddings(self, document_id: int, embeddings: list[list[float]]) -> None:
+        with self._connect() as connection:
+            for index, embedding in enumerate(embeddings):
+                connection.execute(
+                    """
+                    UPDATE kb_chunks
+                    SET embedding_json = ?
+                    WHERE document_id = ? AND chunk_index = ?
+                    """,
+                    (json.dumps(embedding), document_id, index),
+                )
+            connection.commit()
+
+    def search(
+        self,
+        query: str,
+        limit: int = 4,
+        query_embedding: Optional[list[float]] = None,
+    ) -> list[dict[str, str]]:
         tokens = self._tokenize(query)
         if not tokens:
             return []
@@ -83,14 +110,14 @@ class KnowledgeBaseService:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT kb_documents.id, kb_documents.title, kb_chunks.content
+                SELECT kb_documents.id, kb_documents.title, kb_chunks.content, kb_chunks.embedding_json
                 FROM kb_chunks
                 JOIN kb_documents ON kb_documents.id = kb_chunks.document_id
                 """
             ).fetchall()
 
         scored: list[tuple[int, int, str, str]] = []
-        for document_id, title, content in rows:
+        for document_id, title, content, embedding_json in rows:
             lowered = content.lower()
             score = 0
             for token, weight in token_weights.items():
@@ -101,6 +128,9 @@ class KnowledgeBaseService:
                         score += 3
             if any(phrase in lowered for phrase in self._build_phrases(tokens)):
                 score += 5
+            if query_embedding and embedding_json:
+                chunk_embedding = json.loads(embedding_json)
+                score += int(self._cosine_similarity(query_embedding, chunk_embedding) * 100)
             if score > 0:
                 scored.append((score, document_id, title, content))
 
@@ -121,9 +151,13 @@ class KnowledgeBaseService:
         with self._connect() as connection:
             docs = connection.execute("SELECT COUNT(*) FROM kb_documents").fetchone()
             chunks = connection.execute("SELECT COUNT(*) FROM kb_chunks").fetchone()
+            embedded = connection.execute(
+                "SELECT COUNT(*) FROM kb_chunks WHERE embedding_json IS NOT NULL AND embedding_json != ''"
+            ).fetchone()
         return {
             "documents": int(docs[0]) if docs else 0,
             "chunks": int(chunks[0]) if chunks else 0,
+            "embedded_chunks": int(embedded[0]) if embedded else 0,
         }
 
     def _split_into_chunks(self, content: str) -> list[str]:
@@ -148,3 +182,13 @@ class KnowledgeBaseService:
         if len(tokens) < 2:
             return []
         return [f"{tokens[index]} {tokens[index + 1]}" for index in range(len(tokens) - 1)]
+
+    def _cosine_similarity(self, left: list[float], right: list[float]) -> float:
+        if not left or not right or len(left) != len(right):
+            return 0.0
+        dot = sum(a * b for a, b in zip(left, right))
+        left_norm = math.sqrt(sum(a * a for a in left))
+        right_norm = math.sqrt(sum(b * b for b in right))
+        if left_norm == 0 or right_norm == 0:
+            return 0.0
+        return dot / (left_norm * right_norm)

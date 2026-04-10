@@ -1,5 +1,6 @@
 import sqlite3
 from pathlib import Path
+from typing import Optional
 
 
 DEFAULT_MODE = "default"
@@ -89,3 +90,39 @@ class UserProfileService:
                 (user_id,),
             ).fetchone()
         return bool(row[0]) if row else False
+
+    def export_csv(self) -> str:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT user_id, username, first_name, mode, admin_mode, first_seen_at, last_seen_at
+                FROM user_profiles
+                ORDER BY last_seen_at DESC
+                """
+            ).fetchall()
+        lines = ["user_id,username,first_name,mode,admin_mode,first_seen_at,last_seen_at"]
+        for row in rows:
+            safe = [str(item or "").replace('"', "'").replace("\n", " ") for item in row]
+            lines.append(",".join(f'"{item}"' for item in safe))
+        return "\n".join(lines)
+
+    def list_user_ids(self, segment: str = "all") -> list[int]:
+        segment = (segment or "all").strip().lower()
+        query = "SELECT user_id FROM user_profiles"
+        params: tuple[object, ...] = ()
+        if segment == "all":
+            pass
+        elif segment == "active_today":
+            query += " WHERE DATE(last_seen_at) = DATE('now', 'localtime')"
+        elif segment.startswith("mode:"):
+            mode = segment.split(":", 1)[1]
+            query += " WHERE mode = ?"
+            params = (mode,)
+        elif segment == "admin_mode":
+            query += " WHERE admin_mode = 1"
+        else:
+            return []
+        query += " ORDER BY last_seen_at DESC"
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [int(row[0]) for row in rows]
