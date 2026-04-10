@@ -1,0 +1,97 @@
+# Filka Bot
+
+Telegram AI-бот Филька.
+
+## Что умеет
+
+- Отвечает на любые текстовые сообщения.
+- Держит постоянный контекст диалога в SQLite отдельно для каждого пользователя.
+- Имеет характер Фильки: ворчит, подкалывает, но помогает по делу.
+- Может отвечать по фото через attachments GigaChat.
+- Поддерживает whitelist пользователей.
+- Может автоматически добавлять пользователя в whitelist после проверки подписки на канал.
+- Поддерживает запуск локально и через Docker.
+
+## Быстрый старт
+
+1. Скопируй шаблон окружения:
+
+```bash
+cp .env.example .env
+```
+
+2. Заполни в `.env`:
+
+- `TELEGRAM_BOT_TOKEN`
+- `GIGACHAT_CREDENTIALS`
+- при необходимости `GIGACHAT_MODEL`
+- при необходимости `FILKA_ALLOWED_USER_IDS`, например `12345,67890`
+- если нужна автопроверка подписки, укажи `FILKA_REQUIRED_CHAT_ID`, например `@my_channel`
+- для кнопки подписки можно указать `FILKA_REQUIRED_CHAT_URL`, например `https://t.me/my_channel`
+
+3. Запусти локально:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+python -m filka_bot
+```
+
+Один запуск одной командой:
+
+```bash
+cd /Users/fil/Desktop/neo_bot && source .venv/bin/activate && PYTHONPATH=src python3 -m filka_bot
+```
+
+Установка зависимостей одной командой:
+
+```bash
+cd /Users/fil/Desktop/neo_bot && source .venv/bin/activate && pip install -r requirements.txt
+```
+
+## Команды бота
+
+- `/start` - приветствие и краткое описание.
+- `/help` - подсказка по работе.
+- `/clear` - очистка контекста диалога.
+- `/status` - показывает текущие настройки доступа и памяти.
+
+## Важное
+
+- Фото обрабатываются через загрузку файла как attachment.
+- Для голосовых в этом проекте пока сделан безопасный fallback: бот просит прислать текст или краткую расшифровку, потому что отдельный speech-to-text контур не подключен.
+- Если указан `FILKA_REQUIRED_CHAT_ID`, бот сначала проверит подписку на канал и затем автоматически внесет пользователя в постоянный whitelist.
+- Если в твоем окружении нужен корневой сертификат Минцифры или особая SSL-настройка, это можно донастроить через параметры SDK или переменные окружения.
+
+## Docker под ключ
+
+```bash
+mkdir -p data logs
+docker compose up --build -d
+docker compose logs -f
+```
+
+Логи пишутся в `logs/filka.log`, база истории хранится в `data/filka.db`.
+
+## Сервер
+
+1. Скопируй проект на сервер.
+2. Проверь, что в `.env` заполнены нужные токены и настройки.
+3. Запусти:
+
+```bash
+cd /opt/neo_bot
+chmod +x deploy.sh
+./deploy.sh
+```
+
+Полезные команды:
+
+```bash
+docker compose logs -f
+docker compose ps
+docker compose restart
+docker compose pull
+```

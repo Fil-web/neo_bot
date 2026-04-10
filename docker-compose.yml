@@ -1,0 +1,12 @@
+services:
+  filka-bot:
+    container_name: filka-bot
+    build:
+      context: .
+    env_file:
+      - .env
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
