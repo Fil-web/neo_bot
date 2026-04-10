@@ -6,16 +6,19 @@ from tempfile import NamedTemporaryFile
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandObject
-from aiogram.utils.chat_action import ChatActionSender
 from aiogram.filters import Command
 from aiogram.types import BufferedInputFile
 from aiogram.types import CallbackQuery
 from aiogram.types import Message
+from aiogram.utils.chat_action import ChatActionSender
 
+from filka_bot import copy_deck
 from filka_bot.config import Settings
 from filka_bot.formatting import with_emoji_prefix
 from filka_bot.keyboards import build_main_keyboard
 from filka_bot.keyboards import build_mode_keyboard
+from filka_bot.keyboards import build_onboarding_step_three_keyboard
+from filka_bot.keyboards import build_onboarding_step_two_keyboard
 from filka_bot.keyboards import build_start_inline_keyboard
 from filka_bot.middlewares import build_subscription_keyboard
 from filka_bot.services.access_registry import AccessRegistry
@@ -32,14 +35,6 @@ from filka_bot.services.user_profiles import UserProfileService
 
 router = Router()
 logger = logging.getLogger(__name__)
-
-MODE_LABELS = {
-    "default": "обычный",
-    "hard": "жесткий",
-    "business": "деловой",
-    "sales": "продажи",
-    "support": "поддержка",
-}
 
 
 async def download_to_tempfile(
@@ -70,6 +65,10 @@ def format_knowledge_context(results: list[dict[str, str]]) -> str:
     return "\n\n".join(parts)
 
 
+async def send_main_menu(message: Message, text: str) -> None:
+    await message.answer(with_emoji_prefix(text), reply_markup=build_main_keyboard())
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message, user_profiles: UserProfileService) -> None:
     user_profiles.ensure_user(
@@ -78,47 +77,20 @@ async def cmd_start(message: Message, user_profiles: UserProfileService) -> None
         first_name=message.from_user.first_name or "",
     )
     await message.answer(
-        with_emoji_prefix(
-            "Я Филька, бот от #Фил. Спрашивай, что нужно. 😏\n\n"
-            "Что умею:\n"
-            "- отвечаю на текстовые вопросы;\n"
-            "- смотрю фото и помогаю разобрать, что на них;\n"
-            "- разбираю документы: PDF, DOCX, TXT, CSV, XLSX;\n"
-            "- пробую понять голосовые;\n"
-            "- могу работать в разных режимах ответа;\n"
-            "- помню до 30 сообщений в день.\n\n"
-            "Если вдруг растеряешься:\n"
-            "- жми кнопки ниже;\n"
-            "- или просто пиши сообщением."
-        ),
+        with_emoji_prefix(copy_deck.START_INTRO),
         reply_markup=build_start_inline_keyboard(),
     )
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    await message.answer(
-        with_emoji_prefix(
-            "Все просто:\n"
-            "- отправь текстовый вопрос;\n"
-            "- можно прислать фото с подписью или без нее;\n"
-            "- можно прислать документ и попросить разобрать;\n"
-            "- можно прислать голосовое;\n"
-            "- /mode меняет режим ответа;\n"
-            "- /clear очищает память за сегодня;\n"
-            "- /status показывает краткий статус."
-        ),
-        reply_markup=build_main_keyboard(),
-    )
+    await send_main_menu(message, copy_deck.HELP_TEXT)
 
 
 @router.message(Command("clear"))
 async def cmd_clear(message: Message, history: DialogHistory) -> None:
     history.clear(message.from_user.id)
-    await message.answer(
-        with_emoji_prefix("Ладно, все стер. Начинай заново, раз уж так захотелось."),
-        reply_markup=build_main_keyboard(),
-    )
+    await send_main_menu(message, copy_deck.CLEAR_DONE)
 
 
 @router.message(Command("status"))
@@ -131,47 +103,26 @@ async def cmd_status(
     user_id = message.from_user.id
     stored_messages = history.count(user_id)
     mode = user_profiles.get_mode(user_id)
-    await message.answer(
-        with_emoji_prefix(
-            "Коротко по статусу:\n"
-            f"- твой user ID: `{user_id}`\n"
-            f"- сообщений в памяти сегодня: {stored_messages}\n"
-            f"- дневной лимит истории: {settings.filka_max_history}\n"
-            f"- режим: {MODE_LABELS.get(mode, mode)}\n"
-            f"- канал проверки: {settings.filka_required_chat_id or 'не задан'}"
-        ),
-        reply_markup=build_main_keyboard(),
+    await send_main_menu(
+        message,
+        copy_deck.status_text(stored_messages, settings.filka_max_history, mode),
     )
 
 
 @router.message(Command("mode"))
 async def cmd_mode(message: Message) -> None:
-    await message.answer(
-        with_emoji_prefix("Выбирай режим, раз уж настроение у тебя меняется чаще погоды."),
-        reply_markup=build_mode_keyboard(),
-    )
+    await message.answer(with_emoji_prefix(copy_deck.MODE_SELECT), reply_markup=build_mode_keyboard())
 
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, settings: Settings, analytics: AnalyticsService) -> None:
     if not is_admin(message.from_user.id, settings):
-        await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
+        await message.answer(with_emoji_prefix(copy_deck.ADMIN_UNAVAILABLE))
         return
 
     stats = analytics.get_admin_stats()
     await message.answer(
-        with_emoji_prefix(
-            "Админ-статистика за сегодня:\n"
-            f"- событий: {stats.get('total_events_today', 0)}\n"
-            f"- уникальных пользователей: {stats.get('total_users', 0)}\n"
-            f"- активных сегодня: {stats.get('active_today', 0)}\n"
-            f"- ошибок: {stats.get('errors_today', 0)}\n"
-            f"- текст: {stats.get('type_text', 0)}\n"
-            f"- фото: {stats.get('type_photo', 0)}\n"
-            f"- голосовые: {stats.get('type_voice', 0)}\n"
-            f"- документы: {stats.get('type_document', 0)}\n"
-            f"- onboarding: {stats.get('type_onboarding', 0)}"
-        ),
+        with_emoji_prefix(copy_deck.admin_stats_text(stats)),
         reply_markup=build_main_keyboard(),
     )
 
@@ -184,51 +135,45 @@ async def cmd_adminmode(
     command: CommandObject,
 ) -> None:
     if not is_admin(message.from_user.id, settings):
-        await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
+        await message.answer(with_emoji_prefix(copy_deck.ADMINMODE_UNAVAILABLE))
         return
 
     enabled = (command.args or "").strip().lower() != "off"
     user_profiles.set_admin_mode(message.from_user.id, enabled)
-    state = "включен" if enabled else "выключен"
-    await message.answer(with_emoji_prefix(f"Админ-режим {state}. Ну вот, теперь ты при полном параде."))
+    await message.answer(with_emoji_prefix(copy_deck.admin_mode_text(enabled)))
 
 
 @router.message(Command("exportstats"))
 async def cmd_exportstats(message: Message, settings: Settings, analytics: AnalyticsService) -> None:
     if not is_admin(message.from_user.id, settings):
-        await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
+        await message.answer(with_emoji_prefix(copy_deck.ADMIN_UNAVAILABLE))
         return
 
     payload = analytics.export_csv().encode("utf-8")
     file = BufferedInputFile(payload, filename="filka_stats.csv")
-    await message.answer_document(file, caption=with_emoji_prefix("Вот экспорт статистики. Держи свой CSV."))
+    await message.answer_document(file, caption=with_emoji_prefix(copy_deck.EXPORT_STATS_READY))
 
 
 @router.message(Command("exportusers"))
 async def cmd_exportusers(message: Message, settings: Settings, user_profiles: UserProfileService) -> None:
     if not is_admin(message.from_user.id, settings):
-        await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
+        await message.answer(with_emoji_prefix(copy_deck.ADMIN_UNAVAILABLE))
         return
 
     payload = user_profiles.export_csv().encode("utf-8")
     file = BufferedInputFile(payload, filename="filka_users.csv")
-    await message.answer_document(file, caption=with_emoji_prefix("Вот экспорт пользователей. Наслаждайся табличкой."))
+    await message.answer_document(file, caption=with_emoji_prefix(copy_deck.EXPORT_USERS_READY))
 
 
 @router.message(Command("kbstats"))
 async def cmd_kbstats(message: Message, settings: Settings, knowledge_base: KnowledgeBaseService) -> None:
     if not is_admin(message.from_user.id, settings):
-        await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
+        await message.answer(with_emoji_prefix(copy_deck.ADMIN_UNAVAILABLE))
         return
 
     stats = knowledge_base.stats()
     await message.answer(
-        with_emoji_prefix(
-            "База знаний:\n"
-            f"- документов: {stats['documents']}\n"
-            f"- чанков: {stats['chunks']}\n"
-            "Чтобы добавить документ в базу, пришли файл с подписью `/kb`."
-        ),
+        with_emoji_prefix(copy_deck.kb_stats_text(stats)),
         reply_markup=build_main_keyboard(),
     )
 
@@ -241,14 +186,14 @@ async def check_subscription_callback(
     analytics: AnalyticsService,
 ) -> None:
     if not callback.from_user:
-        await callback.answer("Не вышло понять, кто ты такой.", show_alert=True)
+        await callback.answer(copy_deck.UNKNOWN_USER_ALERT, show_alert=True)
         return
 
     if not settings.filka_required_chat_id:
-        text = with_emoji_prefix("Проверять пока нечего: канал для подписки не настроен.")
+        text = with_emoji_prefix(copy_deck.SUBSCRIPTION_CHECK_UNAVAILABLE)
         if callback.message:
             await callback.message.edit_text(text)
-        await callback.answer("Канал не настроен", show_alert=True)
+        await callback.answer(copy_deck.CHANNEL_NOT_CONFIGURED_ALERT, show_alert=True)
         return
 
     try:
@@ -263,44 +208,64 @@ async def check_subscription_callback(
     if is_subscribed:
         access_registry.allow_user(callback.from_user.id, source="subscription")
         analytics.log_event("onboarding", user_id=callback.from_user.id, success=True, details="subscription_ok")
-        text = with_emoji_prefix(
-            "Подписка подтверждена. Ну надо же, справился. Теперь доступ открыт.\n\n"
-            "Я Филька, бот от #Фил. Можешь сразу писать вопрос обычным сообщением.\n"
-            "Команды на случай внезапной растерянности:\n"
-            "- /start\n"
-            "- /help\n"
-            "- /clear\n"
-            "- /status\n"
-            "- /mode"
-        )
+        text = with_emoji_prefix(copy_deck.SUBSCRIPTION_SUCCESS)
         if callback.message:
             await callback.message.edit_text(text)
             await callback.message.answer(
-                with_emoji_prefix("Клавиатуру тоже вернул. Ну вдруг потеряешься."),
+                with_emoji_prefix(copy_deck.MAIN_MENU_READY),
                 reply_markup=build_main_keyboard(),
             )
-        await callback.answer("Доступ открыт")
+        await callback.answer(copy_deck.SUBSCRIPTION_SUCCESS_ALERT)
         return
 
-    text = with_emoji_prefix(
-        "Подписку я не вижу. Сначала подпишись на канал, потом уже жми проверку снова."
-    )
+    text = with_emoji_prefix(copy_deck.SUBSCRIPTION_REQUIRED)
     if callback.message:
         await callback.message.edit_text(
             text,
             reply_markup=build_subscription_keyboard(settings.filka_required_chat_url),
         )
-    await callback.answer("Подписка пока не найдена", show_alert=True)
+    await callback.answer(copy_deck.SUBSCRIPTION_MISSING_ALERT, show_alert=True)
 
 
 @router.callback_query(F.data == "menu_mode")
 async def menu_mode_callback(callback: CallbackQuery) -> None:
     if callback.message:
         await callback.message.answer(
-            with_emoji_prefix("Выбирай режим. Да, у меня тоже есть настройки характера."),
+            with_emoji_prefix(copy_deck.MODE_SELECT),
             reply_markup=build_mode_keyboard(),
         )
-    await callback.answer("Открыл режимы")
+    await callback.answer(copy_deck.OPENED_MODES_ALERT)
+
+
+@router.callback_query(F.data == "onboarding_2")
+async def onboarding_step_two(callback: CallbackQuery) -> None:
+    if callback.message:
+        await callback.message.edit_text(
+            with_emoji_prefix(copy_deck.ONBOARDING_CAPABILITIES),
+            reply_markup=build_onboarding_step_two_keyboard(),
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "onboarding_3")
+async def onboarding_step_three(callback: CallbackQuery) -> None:
+    if callback.message:
+        await callback.message.edit_text(
+            with_emoji_prefix(copy_deck.ONBOARDING_MODE),
+            reply_markup=build_onboarding_step_three_keyboard(),
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "onboarding_done")
+async def onboarding_done(callback: CallbackQuery) -> None:
+    if callback.message:
+        await callback.message.edit_text(with_emoji_prefix(copy_deck.ONBOARDING_DONE))
+        await callback.message.answer(
+            with_emoji_prefix(copy_deck.MAIN_MENU_READY),
+            reply_markup=build_main_keyboard(),
+        )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("mode_"))
@@ -310,22 +275,22 @@ async def mode_select_callback(
     analytics: AnalyticsService,
 ) -> None:
     if not callback.from_user:
-        await callback.answer("Не понял, кто нажал", show_alert=True)
+        await callback.answer(copy_deck.UNKNOWN_CALLBACK_USER_ALERT, show_alert=True)
         return
 
     mode = callback.data.replace("mode_", "", 1)
-    if mode not in MODE_LABELS:
-        await callback.answer("Неизвестный режим", show_alert=True)
+    if mode not in copy_deck.MODE_LABELS:
+        await callback.answer(copy_deck.UNKNOWN_MODE_ALERT, show_alert=True)
         return
 
     user_profiles.set_mode(callback.from_user.id, mode)
     analytics.log_event("onboarding", user_id=callback.from_user.id, success=True, details=f"mode:{mode}")
     if callback.message:
         await callback.message.answer(
-            with_emoji_prefix(f"Режим переключил на `{MODE_LABELS[mode]}`. Ну все, держись."),
+            with_emoji_prefix(copy_deck.mode_saved_text(mode)),
             reply_markup=build_main_keyboard(),
         )
-    await callback.answer("Режим обновлен")
+    await callback.answer(copy_deck.MODE_UPDATED_ALERT)
 
 
 @router.message(F.text.casefold() == "помощь")
@@ -357,17 +322,17 @@ async def cmd_ban(
     command: CommandObject,
 ) -> None:
     if not is_admin(message.from_user.id, settings):
-        await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
+        await message.answer(with_emoji_prefix(copy_deck.ADMIN_UNAVAILABLE))
         return
     args = (command.args or "").split(maxsplit=1)
     if not args:
-        await message.answer(with_emoji_prefix("Формат такой: `/ban user_id причина`"))
+        await message.answer(with_emoji_prefix(copy_deck.BAN_USAGE))
         return
     target_user_id = int(args[0])
     reason = args[1] if len(args) > 1 else ""
     moderation.ban(target_user_id, reason=reason)
     analytics.log_event("moderation", user_id=target_user_id, success=True, details="ban")
-    await message.answer(with_emoji_prefix(f"Пользователь `{target_user_id}` забанен. Шалить меньше надо было."))
+    await message.answer(with_emoji_prefix(copy_deck.ban_success_text(target_user_id)))
 
 
 @router.message(Command("mute"))
@@ -379,18 +344,18 @@ async def cmd_mute(
     command: CommandObject,
 ) -> None:
     if not is_admin(message.from_user.id, settings):
-        await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
+        await message.answer(with_emoji_prefix(copy_deck.ADMIN_UNAVAILABLE))
         return
     args = (command.args or "").split(maxsplit=2)
     if len(args) < 2:
-        await message.answer(with_emoji_prefix("Формат такой: `/mute user_id минуты причина`"))
+        await message.answer(with_emoji_prefix(copy_deck.MUTE_USAGE))
         return
     target_user_id = int(args[0])
     minutes = int(args[1])
     reason = args[2] if len(args) > 2 else ""
     moderation.mute(target_user_id, minutes=minutes, reason=reason)
     analytics.log_event("moderation", user_id=target_user_id, success=True, details=f"mute:{minutes}")
-    await message.answer(with_emoji_prefix(f"Пользователь `{target_user_id}` замьючен на {minutes} мин."))
+    await message.answer(with_emoji_prefix(copy_deck.mute_success_text(target_user_id, minutes)))
 
 
 @router.message(Command("unban"))
@@ -402,16 +367,16 @@ async def cmd_unban(
     command: CommandObject,
 ) -> None:
     if not is_admin(message.from_user.id, settings):
-        await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
+        await message.answer(with_emoji_prefix(copy_deck.ADMIN_UNAVAILABLE))
         return
     target = (command.args or "").strip()
     if not target:
-        await message.answer(with_emoji_prefix("Формат такой: `/unban user_id`"))
+        await message.answer(with_emoji_prefix(copy_deck.UNBAN_USAGE))
         return
     target_user_id = int(target)
     moderation.unban(target_user_id)
     analytics.log_event("moderation", user_id=target_user_id, success=True, details="unban")
-    await message.answer(with_emoji_prefix(f"Пользователь `{target_user_id}` снова на свободе."))
+    await message.answer(with_emoji_prefix(copy_deck.unban_success_text(target_user_id)))
 
 
 @router.message(Command("broadcast"))
@@ -423,11 +388,11 @@ async def cmd_broadcast(
     command: CommandObject,
 ) -> None:
     if not is_admin(message.from_user.id, settings):
-        await message.answer(with_emoji_prefix("Эта команда не для всех. И это нормально."))
+        await message.answer(with_emoji_prefix(copy_deck.ADMIN_UNAVAILABLE))
         return
     raw = (command.args or "").strip()
     if not raw:
-        await message.answer(with_emoji_prefix("Формат такой: `/broadcast segment|текст_рассылки`"))
+        await message.answer(with_emoji_prefix(copy_deck.BROADCAST_USAGE))
         return
 
     if "|" in raw:
@@ -435,12 +400,12 @@ async def cmd_broadcast(
     else:
         segment, text = "all", raw
     if not text:
-        await message.answer(with_emoji_prefix("Текст рассылки пустой. Так себе рассылка выходит."))
+        await message.answer(with_emoji_prefix(copy_deck.BROADCAST_EMPTY))
         return
 
     recipients = user_profiles.list_user_ids(segment)
     if not recipients:
-        await message.answer(with_emoji_prefix("По этому сегменту никого не нашлось. Ну бывает."))
+        await message.answer(with_emoji_prefix(copy_deck.BROADCAST_NO_RECIPIENTS))
         return
 
     sent = 0
@@ -457,26 +422,17 @@ async def cmd_broadcast(
         success=True,
         details=f"segment:{segment};sent:{sent};failed:{failed}",
     )
-    await message.answer(with_emoji_prefix(f"Рассылка ушла по сегменту `{segment}`. Отправлено: {sent}. Ошибок: {failed}."))
+    await message.answer(with_emoji_prefix(copy_deck.broadcast_done_text(sent, failed)))
 
 
 @router.callback_query(F.data == "menu_help")
 async def menu_help_callback(callback: CallbackQuery) -> None:
     if callback.message:
         await callback.message.answer(
-            with_emoji_prefix(
-                "Все просто:\n"
-                "- отправь текстовый вопрос;\n"
-                "- можно прислать фото с подписью или без нее;\n"
-                "- можно прислать документ и попросить разобрать;\n"
-                "- можно прислать голосовое;\n"
-                "- /mode меняет режим ответа;\n"
-                "- /clear очищает память за сегодня;\n"
-                "- /status показывает краткий статус."
-            ),
+            with_emoji_prefix(copy_deck.HELP_TEXT),
             reply_markup=build_main_keyboard(),
         )
-    await callback.answer("Открыл помощь")
+    await callback.answer(copy_deck.OPENED_HELP_ALERT)
 
 
 @router.callback_query(F.data == "menu_status")
@@ -487,7 +443,7 @@ async def menu_status_callback(
     user_profiles: UserProfileService,
 ) -> None:
     if not callback.from_user:
-        await callback.answer("Не понял, кто нажал", show_alert=True)
+        await callback.answer(copy_deck.UNKNOWN_CALLBACK_USER_ALERT, show_alert=True)
         return
 
     user_id = callback.from_user.id
@@ -495,17 +451,10 @@ async def menu_status_callback(
     mode = user_profiles.get_mode(user_id)
     if callback.message:
         await callback.message.answer(
-            with_emoji_prefix(
-                "Коротко по статусу:\n"
-                f"- твой user ID: `{user_id}`\n"
-                f"- сообщений в памяти сегодня: {stored_messages}\n"
-                f"- дневной лимит истории: {settings.filka_max_history}\n"
-                f"- режим: {MODE_LABELS.get(mode, mode)}\n"
-                f"- канал проверки: {settings.filka_required_chat_id or 'не задан'}"
-            ),
+            with_emoji_prefix(copy_deck.status_text(stored_messages, settings.filka_max_history, mode)),
             reply_markup=build_main_keyboard(),
         )
-    await callback.answer("Показал статус")
+    await callback.answer(copy_deck.STATUS_SHOWN_ALERT)
 
 
 @router.callback_query(F.data == "menu_clear")
@@ -514,16 +463,16 @@ async def menu_clear_callback(
     history: DialogHistory,
 ) -> None:
     if not callback.from_user:
-        await callback.answer("Не понял, кто нажал", show_alert=True)
+        await callback.answer(copy_deck.UNKNOWN_CALLBACK_USER_ALERT, show_alert=True)
         return
 
     history.clear(callback.from_user.id)
     if callback.message:
         await callback.message.answer(
-            with_emoji_prefix("Ладно, все стер. Начинай заново, раз уж так захотелось."),
+            with_emoji_prefix(copy_deck.CLEAR_DONE),
             reply_markup=build_main_keyboard(),
         )
-    await callback.answer("Память очищена")
+    await callback.answer(copy_deck.MEMORY_CLEARED_ALERT)
 
 
 @router.message(F.text)
@@ -547,24 +496,21 @@ async def handle_text(
     user_text = message.text.strip()
 
     if not user_text:
-        await message.answer(with_emoji_prefix("Пустое сообщение. Сильно информативно, конечно."))
+        await message.answer(with_emoji_prefix(copy_deck.EMPTY_TEXT))
         return
 
     moderation_status, moderation_reason = moderation.check_status(user_id)
     if moderation_status == "banned":
-        await message.answer(with_emoji_prefix("Доступ закрыт. Тебя заблокировали."))
+        await message.answer(with_emoji_prefix(copy_deck.BANNED_TEXT))
         return
     if moderation_status == "muted":
-        suffix = f" Причина: {moderation_reason}." if moderation_reason else ""
-        await message.answer(with_emoji_prefix(f"Ты временно на паузе. Подожди немного.{suffix}"))
+        await message.answer(with_emoji_prefix(copy_deck.muted_text(moderation_reason)))
         return
 
     allowed, _ = antispam.is_allowed(user_id, request_type="text")
     if not allowed:
         analytics.log_event("text", user_id=user_id, success=False, details="antispam_block")
-        await message.answer(
-            with_emoji_prefix("Не так быстро. Сделай короткую паузу и потом спрашивай дальше.")
-        )
+        await message.answer(with_emoji_prefix(copy_deck.ANTISPAM_TEXT))
         return
 
     dialog_history = history.get(user_id)
@@ -603,11 +549,7 @@ async def handle_text(
     except Exception:
         logger.exception("Failed to get model response")
         analytics.log_event("text", user_id=user_id, success=False)
-        await message.answer(
-            with_emoji_prefix(
-                "Что-то пошло не так на моей стороне. Мир не рухнул, попробуй еще раз чуть позже."
-            )
-        )
+        await message.answer(with_emoji_prefix(copy_deck.MODEL_ERROR))
         return
 
     history.add(user_id, "user", user_text)
@@ -637,11 +579,10 @@ async def handle_photo(
     )
     moderation_status, moderation_reason = moderation.check_status(user_id)
     if moderation_status == "banned":
-        await message.answer(with_emoji_prefix("Доступ закрыт. Тебя заблокировали."))
+        await message.answer(with_emoji_prefix(copy_deck.BANNED_TEXT))
         return
     if moderation_status == "muted":
-        suffix = f" Причина: {moderation_reason}." if moderation_reason else ""
-        await message.answer(with_emoji_prefix(f"Ты временно на паузе. Подожди немного.{suffix}"))
+        await message.answer(with_emoji_prefix(copy_deck.muted_text(moderation_reason)))
         return
     photo = message.photo[-1]
 
@@ -663,11 +604,7 @@ async def handle_photo(
     except Exception:
         logger.exception("Failed to handle photo message")
         analytics.log_event("photo", user_id=user_id, success=False)
-        await message.answer(
-            with_emoji_prefix(
-                "С фото возникла заминка. Да, даже картинка решила усложнить нам жизнь. Попробуй еще раз."
-            )
-        )
+        await message.answer(with_emoji_prefix(copy_deck.PHOTO_ERROR))
         return
     finally:
         if "temp_path" in locals():
@@ -697,14 +634,13 @@ async def handle_voice(
     media = message.voice or message.audio
     moderation_status, moderation_reason = moderation.check_status(user_id)
     if moderation_status == "banned":
-        await message.answer(with_emoji_prefix("Доступ закрыт. Тебя заблокировали."))
+        await message.answer(with_emoji_prefix(copy_deck.BANNED_TEXT))
         return
     if moderation_status == "muted":
-        suffix = f" Причина: {moderation_reason}." if moderation_reason else ""
-        await message.answer(with_emoji_prefix(f"Ты временно на паузе. Подожди немного.{suffix}"))
+        await message.answer(with_emoji_prefix(copy_deck.muted_text(moderation_reason)))
         return
     if media is None:
-        await message.answer(with_emoji_prefix("Тут что-то странное с голосовым. Попробуй еще раз."))
+        await message.answer(with_emoji_prefix(copy_deck.VOICE_EMPTY))
         return
 
     file_name = getattr(media, "file_name", None) or "voice.ogg"
@@ -729,11 +665,7 @@ async def handle_voice(
     except Exception:
         logger.exception("Failed to handle voice message")
         analytics.log_event("voice", user_id=user_id, success=False)
-        await message.answer(
-            with_emoji_prefix(
-                "С голосовым вышла заминка. Если что, пришли текстом или попробуй еще раз."
-            )
-        )
+        await message.answer(with_emoji_prefix(copy_deck.VOICE_ERROR))
         return
     finally:
         if "temp_path" in locals():
@@ -766,11 +698,10 @@ async def handle_document(
     document = message.document
     moderation_status, moderation_reason = moderation.check_status(user_id)
     if moderation_status == "banned":
-        await message.answer(with_emoji_prefix("Доступ закрыт. Тебя заблокировали."))
+        await message.answer(with_emoji_prefix(copy_deck.BANNED_TEXT))
         return
     if moderation_status == "muted":
-        suffix = f" Причина: {moderation_reason}." if moderation_reason else ""
-        await message.answer(with_emoji_prefix(f"Ты временно на паузе. Подожди немного.{suffix}"))
+        await message.answer(with_emoji_prefix(copy_deck.muted_text(moderation_reason)))
         return
     file_name = document.file_name or "document"
     suffix = Path(file_name).suffix or ".bin"
@@ -784,17 +715,11 @@ async def handle_document(
             mime_type=document.mime_type,
         )
     except DocumentParsingError:
-        await message.answer(
-            with_emoji_prefix(
-                "Этот файл я пока нормально не разбираю. Пришли PDF, DOCX, TXT, CSV или XLSX."
-            )
-        )
+        await message.answer(with_emoji_prefix(copy_deck.DOCUMENT_UNSUPPORTED))
         return
     except Exception:
         logger.exception("Failed to parse document")
-        await message.answer(
-            with_emoji_prefix("С документом что-то пошло не так. Попробуй еще раз чуть позже.")
-        )
+        await message.answer(with_emoji_prefix(copy_deck.DOCUMENT_PARSE_ERROR))
         return
     finally:
         if "temp_path" in locals():
@@ -815,7 +740,7 @@ async def handle_document(
             logger.exception("Failed to create embeddings for knowledge base document")
         analytics.log_event("document", user_id=user_id, success=True, details="kb_add")
         await message.answer(
-            with_emoji_prefix(f"Документ добавил в базу знаний. ID: {document_id}. Ну хоть какая-то польза."))
+            with_emoji_prefix(copy_deck.DOCUMENT_KB_ADDED.format(document_id=document_id)))
         return
 
     dialog_history = history.get(user_id)
@@ -834,9 +759,7 @@ async def handle_document(
     except Exception:
         logger.exception("Failed to answer on document")
         analytics.log_event("document", user_id=user_id, success=False)
-        await message.answer(
-            with_emoji_prefix("Документ я прочитал, а вот с ответом вышла заминка. Попробуй еще раз.")
-        )
+        await message.answer(with_emoji_prefix(copy_deck.DOCUMENT_ANSWER_ERROR))
         return
 
     history.add(user_id, "user", f"[document] {file_name} {question}".strip())
@@ -847,6 +770,4 @@ async def handle_document(
 
 @router.message()
 async def handle_unsupported(message: Message) -> None:
-    await message.answer(
-        with_emoji_prefix("Я пока работаю с текстом. Стикеры потом, если доживем до этого.")
-    )
+    await message.answer(with_emoji_prefix(copy_deck.UNSUPPORTED_TEXT))

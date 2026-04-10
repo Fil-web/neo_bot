@@ -9,6 +9,7 @@ from aiogram.types import InlineKeyboardMarkup
 from aiogram.types import Message
 from aiogram.exceptions import TelegramBadRequest
 
+from filka_bot import copy_deck
 from filka_bot.config import Settings
 from filka_bot.formatting import with_emoji_prefix
 from filka_bot.services.access_registry import AccessRegistry
@@ -20,10 +21,10 @@ def build_subscription_keyboard(channel_url: str) -> InlineKeyboardMarkup:
     buttons = []
     if channel_url:
         buttons.append(
-            [InlineKeyboardButton(text="Подписаться на канал", url=channel_url)]
+            [InlineKeyboardButton(text=copy_deck.BUTTON_SUBSCRIBE, url=channel_url)]
         )
     buttons.append(
-        [InlineKeyboardButton(text="Проверить подписку", callback_data="check_subscription")]
+        [InlineKeyboardButton(text=copy_deck.BUTTON_CHECK_SUBSCRIPTION, callback_data="check_subscription")]
     )
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -67,9 +68,7 @@ class AccessMiddleware(BaseMiddleware):
             reply_markup = build_subscription_keyboard(self._settings.filka_required_chat_url)
 
         await event.answer(
-            with_emoji_prefix(
-                "Доступ закрыт. Сначала подпишись на нужный канал, потом приходи умничать сюда."
-            ),
+            with_emoji_prefix(copy_deck.ACCESS_DENIED),
             reply_markup=reply_markup,
         )
         return None
